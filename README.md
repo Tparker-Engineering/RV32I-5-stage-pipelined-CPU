@@ -33,7 +33,7 @@
 
 ### Hazards / forwarding
 - Load-use hazards stall the pipeline.
-- Forwarding is used in EX (and an extra stall is applied for branches that depend on a load still in flight).
+- Forwarding is used in EX (and an extra stall is applied for branches that depend on a load still in the pipeline).
 
 ## Memory system
 
@@ -59,7 +59,7 @@ Stores are routed to I/O when the computed address has `alu_in[31] = 1` (otherwi
 - `0x8000_0004`: write LEDs (updates `LED[9:0]`, honoring byte-enables)
 
 ### Loads from I/O
-WB can select load data from either RAM or I/O (`mem_rdata_in` vs `io_rdata_in`). In this design, the decode stage tags an “I/O load” using the sign bit of the I-type immediate (`iw_in[31]`), so I/O loads are expected to be encoded using a negative I-type offset (bit 11 set), consistent with the `0x8000_0000` region.
+WB can select load data from either RAM or I/O (`mem_rdata_in` vs `io_rdata_in`). The decode stage flags an “I/O load” using the sign bit of the I-type immediate (`iw_in[31]`), so I/O loads are expected to be encoded using a negative I-type offset (bit 11 set), consistent with the `0x8000_0000` region.
 
 ## Instruction classes (decode-level)
 
