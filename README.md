@@ -1,6 +1,4 @@
 # RV32I-5-stage-pipelined-CPU
-# RV32 Pipelined CPU (SystemVerilog)
-
 32-bit RV32 (RISC-V–style) CPU core written in SystemVerilog. The design is organized as a 5-stage pipeline and includes a dual-port RAM plus a small memory-mapped I/O block (LEDs + pushbuttons).
 
 ## Repository contents
