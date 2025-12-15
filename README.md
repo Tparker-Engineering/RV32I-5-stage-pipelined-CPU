@@ -1,99 +1,78 @@
 # RV32I-5-stage-pipelined-CPU
-RV32 (32-bit RISC-V style) CPU core written in SystemVerilog, organized as a 5-stage pipeline with a dual-port RAM and a tiny memory-mapped I/O block (LEDs + pushbuttons).
+# RV32 Pipelined CPU (SystemVerilog)
 
-What’s in this repo
+32-bit RV32 (RISC-V–style) CPU core written in SystemVerilog. The design is organized as a 5-stage pipeline and includes a dual-port RAM plus a small memory-mapped I/O block (LEDs + pushbuttons).
 
-Top level and pipeline stages:
+## Repository contents
 
-RV32_CPU_top.sv — top-level integration (pipeline + RAM + I/O + regfile)
+### Top-level and pipeline stages
+- `RV32_CPU_top.sv` — top-level integration (pipeline + RAM + I/O + regfile)
+- `RV32_IF_top.sv` — Instruction Fetch (PC + instruction address)
+- `RV32_ID_top.sv` — Instruction Decode + immediate gen + branch/jump decision + hazard control
+- `RV32_EX_top.sv` — Execute stage (forwarding + ALU)
+- `RV32_MEM_top.sv` — Memory stage (store byte-enables + RAM vs I/O routing for stores)
+- `RV32_WB_top.sv` — Writeback stage (WB mux + load extract + sign/zero extension)
 
-RV32_IF_top.sv — instruction fetch (PC + instruction port address)
+### Core building blocks
+- `regs.sv` — 32×32 register file (x0 hardwired to 0)
+- `alu.sv` — ALU used in EX (module name: `ALU`)
+- `mem.sv` — dual-port RAM (module name: `dual_port_ram`), initializes from `stop_go.mem`
+- `RV32_IO.sv` — memory-mapped I/O (pushbuttons read, LEDs write)
+- `stop_go.mem` — program image loaded into RAM via `$readmemh`
 
-RV32_ID_top.sv — decode + immediate generation + branch/jump decision + hazard control
+## Pipeline overview
 
-RV32_EX_top.sv — execute stage with forwarding + ALU
+### Stages
+- **IF**: generates instruction memory address, outputs PC + instruction word
+- **ID**: decodes instruction, reads register operands, computes branch/jump targets, controls stall/flush
+- **EX**: computes ALU results (arith/logic/address) with forwarding
+- **MEM**: formats stores (byte enables + shifted store data) and routes stores to RAM vs I/O
+- **WB**: selects writeback source and extracts/sign-extends load data (LB/LH/LBU/LHU)
 
-RV32_MEM_top.sv — store byte-enable generation + RAM vs I/O routing for stores
+### Control flow
+- Branches/JAL/JALR are resolved in **ID**.
+- Taken control transfers assert a **flush** so the next fetched instruction is discarded.
 
-RV32_WB_top.sv — writeback mux + load byte/half selection + sign/zero extension
+### Hazards / forwarding
+- Load-use hazards stall the pipeline.
+- Forwarding is used in EX (and an extra stall is applied for branches that depend on a load still in flight).
 
-Core building blocks:
+## Memory system
 
-regs.sv — 32x32 register file (x0 hard-wired to 0)
+The memory is a dual-port block:
+- **Instruction port**: read-only (`i_addr` → `i_rdata`)
+- **Data port**: read/write with byte enables (`d_addr`, `d_wdata`, `d_be`, `d_we` → `d_rdata`)
 
-alu.sv — ALU used by EX stage (module name: ALU)
+Addressing is word-based internally using bits `[31:2]`.
 
-mem.sv — dual-port RAM (module name: dual_port_ram), initialized from stop_go.mem
-
-RV32_IO.sv — memory-mapped I/O (pushbuttons read, LEDs write)
-
-stop_go.mem — program image loaded into RAM with $readmemh
-
-Pipeline overview
-
-Stages and responsibilities:
-
-IF: generates instruction memory address, outputs PC + instruction word
-
-ID: decodes opcode/funct fields, reads register operands, computes branch/jump targets, controls stalling/flush
-
-EX: computes ALU results (arith/logic/address) with forwarding
-
-MEM: performs store formatting (byte enables + shifted store data) and selects RAM vs I/O for stores
-
-WB: selects writeback source and performs load extraction/sign-extension for LB/LH/LBU/LHU
-
-Control-flow handling:
-
-JAL/JALR/branches are resolved in ID; when a jump/branch is taken, the next fetched instruction is flushed.
-
-Data hazards:
-
-load-use hazards stall the pipeline
-
-forwarding paths are used in EX (and an extra stall is applied for branches that depend on a load still in MEM)
-
-Memory system
-
-The memory is a simple dual-port block:
-
-Instruction port: read-only (i_addr -> i_rdata)
-
-Data port: read/write with byte enables (d_addr/d_wdata/d_be/d_we -> d_rdata)
-
-Addresses are word-indexed using bits [31:2].
-Default memory depth is 2^ADDR_WIDTH words; in mem.sv the default is ADDR_WIDTH = 14 (16384 words = 64 KiB).
+Default depth is `2^ADDR_WIDTH` words. In `mem.sv` the default is:
+- `ADDR_WIDTH = 14` → 16384 words → 64 KiB
 
 Program initialization:
+- `mem.sv` loads `stop_go.mem` at time 0 using `$readmemh("stop_go.mem", ram)`.
 
-mem.sv loads stop_go.mem at time 0 using $readmemh("stop_go.mem", ram)
+## Memory-mapped I/O
 
-Memory-mapped I/O
+### Store routing
+Stores are routed to I/O when the computed address has `alu_in[31] = 1` (otherwise stores go to RAM). I/O uses word offsets `io_addr[3:2]`.
 
-Stores are routed to I/O when the computed address has alu_in[31] = 1 (otherwise they go to RAM). I/O uses word offsets io_addr[3:2]:
+### Map
+- `0x8000_0000`: read pushbuttons (returns `{28'b0, PB[3:0]}`)
+- `0x8000_0004`: write LEDs (updates `LED[9:0]`, honoring byte-enables)
 
-0x8000_0000: read pushbuttons (returns {28'b0, PB[3:0]})
+### Loads from I/O
+WB can select load data from either RAM or I/O (`mem_rdata_in` vs `io_rdata_in`). In this design, the decode stage tags an “I/O load” using the sign bit of the I-type immediate (`iw_in[31]`), so I/O loads are expected to be encoded using a negative I-type offset (bit 11 set), consistent with the `0x8000_0000` region.
 
-0x8000_0004: write LEDs (updates LED[9:0], honoring byte-enables)
+## Instruction classes (decode-level)
 
-Loads can write back from either RAM or I/O (WB selects between mem_rdata_in and io_rdata_in). The ID stage tags a load as “I/O load” based on iw_in[31] (the sign bit of the I-type immediate), so I/O loads are expected to be encoded using a negative I-type offset (bit 11 set) consistent with an address in the 0x8000_0000 region.
+`RV32_ID_top.sv` enables writeback / control for these opcode groups:
+- **R-type ALU** (`0110011`)
+- **I-type ALU** (`0010011`)
+- **Loads** (`0000011`): LB, LH, LW, LBU, LHU (final extract/signing happens in WB)
+- **Stores** (`0100011`): SB, SH, SW (byte-enables generated in MEM)
+- **Branches** (`1100011`): BEQ, BNE, BLT, BGE, BLTU, BGEU (decision in ID)
+- **Jumps**: JAL (`1101111`), JALR (`1100111`)
+- **LUI** (`0110111`)
 
-Implemented instruction classes (decode-level)
-
-RV32_ID_top.sv enables register writeback for these opcode groups:
-
-R-type ALU ops 
-
-I-type ALU ops 
-
-Loads: LB, LH, LW, LBU, LHU (final extraction/signing happens in WB)
-
-Stores: SB, SH, SW (byte-enables generated in MEM)
-
-Branches: BEQ, BNE, BLT, BGE, BLTU, BGEU (decision in ID)
-
-Jumps: JAL and JALR
-
-LUI
-
-x0 is always zero via the regfile implementation in regs.sv.
+Register file notes:
+- x0 is always zero (implemented in `regs.sv`).
